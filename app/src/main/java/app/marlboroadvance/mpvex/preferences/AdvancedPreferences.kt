@@ -6,7 +6,7 @@ import app.marlboroadvance.mpvex.preferences.preference.PreferenceStore
 class AdvancedPreferences(
   preferenceStore: PreferenceStore,
 ) {
-  val mpvConfStorageUri = preferenceStore.getString("mpv_conf_storage_location_uri")
+  val mpvConfStorageUri = preferenceStore.getString("mpv_conf_storage_location_uri","/storage/emulated/0/mpv")
   val mpvConf = preferenceStore.getString("mpv.conf")
   val inputConf = preferenceStore.getString("input.conf")
 
