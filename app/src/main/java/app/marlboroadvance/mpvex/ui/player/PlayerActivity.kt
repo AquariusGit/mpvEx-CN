@@ -2662,37 +2662,52 @@ class PlayerActivity :
     val isNoSheetOpen = viewModel.sheetShown.value == Sheets.None
 
     when (keyCode) {
-      KeyEvent.KEYCODE_DPAD_UP -> {
-        return super.onKeyDown(keyCode, event)
-      }
-
-      KeyEvent.KEYCODE_DPAD_DOWN,
-      KeyEvent.KEYCODE_DPAD_RIGHT,
-      KeyEvent.KEYCODE_DPAD_LEFT,
-        -> {
-        if (isTrackSheetOpen) {
-          return super.onKeyDown(keyCode, event)
-        }
-
-        if (isNoSheetOpen) {
-          when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_RIGHT -> {
-              viewModel.handleRightDoubleTap()
-              return true
+      // 1. 将 UP 和 DOWN 拦截并合理分发
+        KeyEvent.KEYCODE_DPAD_UP,
+        KeyEvent.KEYCODE_DPAD_DOWN -> {
+            // 如果弹窗打开，交给系统原生逻辑处理焦点移动（如选择字幕/音频轨道）
+            if (isTrackSheetOpen) {
+                return super.onKeyDown(keyCode, event)
             }
 
-            KeyEvent.KEYCODE_DPAD_LEFT -> {
-              viewModel.handleLeftDoubleTap()
-              return true
+            // 如果没有弹窗，将按键事件传给 mpv 核心，使 input.conf 中的 UP/DOWN 生效
+            if (isNoSheetOpen) {
+                event?.let { player.onKey(it) }
+                return true // 消费掉事件，防止系统 UI 产生异常焦点跳转
             }
-          }
+
+            return super.onKeyDown(keyCode, event)
         }
-        return super.onKeyDown(keyCode, event)
-      }
+
+        KeyEvent.KEYCODE_DPAD_RIGHT,
+        KeyEvent.KEYCODE_DPAD_LEFT -> {
+            if (isTrackSheetOpen) {
+                return super.onKeyDown(keyCode, event)
+            }
+
+            if (isNoSheetOpen) {
+                when (keyCode) {
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        viewModel.handleRightDoubleTap()
+                        return true
+                    }
+
+                    KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        viewModel.handleLeftDoubleTap()
+                        return true
+                    }
+                }
+            }
+            return super.onKeyDown(keyCode, event)
+        }
 
       KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
         if (isTrackSheetOpen) {
           return super.onKeyDown(keyCode, event)
+        }
+        if (isNoSheetOpen) {
+          event?.let { player.onKey(it) } // 👈 传给 mpv 核心
+          return true
         }
         return super.onKeyDown(keyCode, event)
       }
