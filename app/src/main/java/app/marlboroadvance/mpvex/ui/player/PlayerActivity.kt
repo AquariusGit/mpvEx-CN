@@ -335,7 +335,17 @@ class PlayerActivity :
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
+
+    val rootView = findViewById<View>(android.R.id.content)
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+      // 创建一个系统的透明指针图标
+      val transparentIcon = PointerIcon.getSystemIcon(this, PointerIcon.TYPE_NULL)
+      // 将其应用到根视图上
+      rootView.pointerIcon = transparentIcon
+    }
+    
     setContentView(binding.root)
+    
 
     setupMPV()
     viewModel.onMpvCoreInitialized()
