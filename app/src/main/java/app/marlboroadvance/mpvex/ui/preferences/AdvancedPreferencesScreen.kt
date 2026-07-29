@@ -84,6 +84,45 @@ object AdvancedPreferencesScreen : Screen {
     var importStats by remember { mutableStateOf<SettingsManager.ImportStats?>(null) }
     var exportStats by remember { mutableStateOf<SettingsManager.ExportStats?>(null) }
 
+    // 检测是否为Android TV，如果是则自动设置默认目录
+    LaunchedEffect(Unit) {
+      val isAndroidTV = context.packageManager.hasSystemFeature("android.hardware.type.television")
+      if (isAndroidTV && preferences.mpvConfStorageUri.get().isBlank()) {
+        scope.launch(Dispatchers.IO) {
+          val defaultMpvPath = "/storage/emulated/0/mpv"
+          val mpvDir = File(defaultMpvPath)
+          
+          // 如果目录不存在，创建它
+          if (!mpvDir.exists()) {
+            runCatching {
+              mpvDir.mkdirs()
+              withContext(Dispatchers.Main) {
+                Toast.makeText(
+                  context,
+                  "Android TV: 已创建默认 MPV 目录",
+                  Toast.LENGTH_SHORT,
+                ).show()
+              }
+            }.onFailure { e ->
+              android.util.Log.e("AdvancedPrefs", "Failed to create MPV directory", e)
+            }
+          }
+          
+          // 设置为默认目录的URI (使用file://协议)
+          val defaultUri = Uri.fromFile(mpvDir).toString()
+          preferences.mpvConfStorageUri.set(defaultUri)
+          
+          withContext(Dispatchers.Main) {
+            Toast.makeText(
+              context,
+              "Android TV: 已自动设置 MPV 配置目录",
+              Toast.LENGTH_SHORT,
+            ).show()
+          }
+        }
+      }
+    }
+
     // Export settings launcher
     val exportLauncher =
       rememberLauncherForActivityResult(
@@ -337,35 +376,50 @@ object AdvancedPreferencesScreen : Screen {
                 }
               }
               
-              // Load input.conf when storage location changes
-              LaunchedEffect(mpvConfStorageLocation) {
-                if (mpvConfStorageLocation.isBlank()) return@LaunchedEffect
-                withContext(Dispatchers.IO) {
-                  val tempFile = kotlin.io.path.createTempFile()
-                  runCatching {
-                    val tree =
-                      DocumentFile.fromTreeUri(
-                        context,
-                        mpvConfStorageLocation.toUri(),
-                      )
-                    val inputConfFile = tree?.findFile("input.conf")
-                    if (inputConfFile != null && inputConfFile.exists()) {
-                      context.contentResolver
-                        .openInputStream(
-                          inputConfFile.uri,
-                        )?.copyTo(tempFile.outputStream())
-                      val content = tempFile.readLines().fastJoinToString("\n")
-                      preferences.inputConf.set(content)
-                      File(context.filesDir, "input.conf").writeText(content)
-                      withContext(Dispatchers.Main) {
-                        inputConf = content
-                      }
-                    }
-                  }
-                  tempFile.deleteIfExists()
-                }
-              }
-              
+               // Load input.conf when storage location changes
+               LaunchedEffect(mpvConfStorageLocation) {
+                 if (mpvConfStorageLocation.isBlank()) return@LaunchedEffect
+                 withContext(Dispatchers.IO) {
+                   val tempFile = kotlin.io.path.createTempFile()
+                   runCatching {
+                     // 检查是否为本地文件路径 (file://)
+                     if (mpvConfStorageLocation.startsWith("file://")) {
+                       val filePath = mpvConfStorageLocation.removePrefix("file://")
+                       val inputConfFile = File(filePath, "input.conf")
+                       if (inputConfFile.exists() && inputConfFile.isFile) {
+                         val content = inputConfFile.readLines().fastJoinToString("\n")
+                         preferences.inputConf.set(content)
+                         File(context.filesDir, "input.conf").writeText(content)
+                         withContext(Dispatchers.Main) {
+                           inputConf = content
+                         }
+                       }
+                     } else {
+                       // 原有的DocumentTree URI处理逻辑
+                       val tree =
+                         DocumentFile.fromTreeUri(
+                           context,
+                           mpvConfStorageLocation.toUri(),
+                         )
+                       val inputConfFile = tree?.findFile("input.conf")
+                       if (inputConfFile != null && inputConfFile.exists()) {
+                         context.contentResolver
+                           .openInputStream(
+                             inputConfFile.uri,
+                           )?.copyTo(tempFile.outputStream())
+                         val content = tempFile.readLines().fastJoinToString("\n")
+                         preferences.inputConf.set(content)
+                         File(context.filesDir, "input.conf").writeText(content)
+                         withContext(Dispatchers.Main) {
+                           inputConf = content
+                         }
+                       }
+                     }
+                   }
+                   tempFile.deleteIfExists()
+                 }
+               }
+
               TwoTargetIconButtonPreference(
                 title = { Text(stringResource(R.string.pref_advanced_mpv_conf_storage_location)) },
                 summary = {
