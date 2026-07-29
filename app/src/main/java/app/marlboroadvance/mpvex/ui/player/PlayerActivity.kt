@@ -62,6 +62,8 @@ import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import java.io.File
 
+import android.view.PointerIcon
+
 /**
  * Main player activity that handles video playback using the MPV library.
  *
