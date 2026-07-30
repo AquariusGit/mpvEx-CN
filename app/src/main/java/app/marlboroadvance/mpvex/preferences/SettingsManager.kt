@@ -72,6 +72,19 @@ class SettingsManager(
       }
     }
 
+  // Import from file path (for backup.xml restoration)
+  suspend fun importSettingsFromFile(filePath: String): Result<ImportStats> =
+    withContext(Dispatchers.IO) {
+      try {
+        java.io.File(filePath).inputStream().use { inputStream ->
+          val stats = readSettingsFromXml(inputStream)
+          Result.success(stats)
+        }
+      } catch (e: Exception) {
+        Result.failure(e)
+      }
+    }
+
 
   private suspend fun writeSettingsToXml(outputStream: OutputStream): ExportStats {
     val serializer: XmlSerializer = Xml.newSerializer()
