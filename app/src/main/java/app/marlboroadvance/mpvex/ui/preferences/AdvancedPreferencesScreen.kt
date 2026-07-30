@@ -274,8 +274,8 @@ object AdvancedPreferencesScreen : Screen {
                   onClick = {
                     // 点击：直接导出到根目录mpv/mpv_backup.xml
                     val backupFile = File(
-                      Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
-                      "mpv/mpv_backup.xml"
+                      Environment.getExternalStoragePublicDirectory("mpv"),
+                      "mpv_backup.xml"
                     )
                     scope.launch {
                       settingsManager.exportSettings(backupFile.toUri()).fold(
@@ -321,8 +321,8 @@ object AdvancedPreferencesScreen : Screen {
                   onClick = {
                     // 点击：直接从根目录mpv/mpv_backup.xml导入
                     val backupFile = File(
-                      Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
-                      "mpv/mpv_backup.xml"
+                      Environment.getExternalStoragePublicDirectory("mpv"),
+                      "mpv_backup.xml"
                     )
                     if (!backupFile.exists()) {
                       Toast.makeText(
