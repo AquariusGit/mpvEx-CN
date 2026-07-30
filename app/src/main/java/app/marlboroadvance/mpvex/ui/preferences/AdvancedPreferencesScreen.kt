@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Column
 import app.marlboroadvance.mpvex.utils.media.OpenDocumentTreeContract
 import androidx.compose.foundation.layout.fillMaxSize
@@ -269,9 +270,34 @@ object AdvancedPreferencesScreen : Screen {
                     tint = MaterialTheme.colorScheme.primary
                   )
                 },
-                onClick = {
-                  exportLauncher.launch(settingsManager.getDefaultExportFilename())
-                },
+                modifier = Modifier.combinedClickable(
+                  onClick = {
+                    // 点击：直接导出到根目录mpv/mpv_backup.xml
+                    val backupFile = File(
+                      Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+                      "mpv/mpv_backup.xml"
+                    )
+                    scope.launch {
+                      settingsManager.exportSettings(backupFile.toUri()).fold(
+                        onSuccess = { stats ->
+                          exportStats = stats
+                          showExportDialog = true
+                        },
+                        onFailure = { error ->
+                          Toast.makeText(
+                            context,
+                            "导出失败: ${error.message}",
+                            Toast.LENGTH_LONG,
+                          ).show()
+                        },
+                      )
+                    }
+                  },
+                  onLongClick = {
+                    // 长按：打开文件选择器
+                    exportLauncher.launch(settingsManager.getDefaultExportFilename())
+                  }
+                ),
               )
 
               PreferenceDivider()
@@ -291,35 +317,42 @@ object AdvancedPreferencesScreen : Screen {
                     tint = MaterialTheme.colorScheme.primary
                   )
                 },
-                onClick = {
-                  // Try to import from mpv/backup.xml first (for Android TV without DocumentUI)
-                  scope.launch {
-                    val backupFilePath = Environment.getExternalStorageDirectory().path + "/mpv/backup.xml"
-                    val backupFile = java.io.File(backupFilePath)
-
-                    if (backupFile.exists()) {
-                      // Try to restore from backup.xml
-                      settingsManager.importSettingsFromFile(backupFilePath).fold(
+                modifier = Modifier.combinedClickable(
+                  onClick = {
+                    // 点击：直接从根目录mpv/mpv_backup.xml导入
+                    val backupFile = File(
+                      Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
+                      "mpv/mpv_backup.xml"
+                    )
+                    if (!backupFile.exists()) {
+                      Toast.makeText(
+                        context,
+                        "备份文件不存在: ${backupFile.absolutePath}",
+                        Toast.LENGTH_LONG,
+                      ).show()
+                      return@combinedClickable
+                    }
+                    scope.launch {
+                      settingsManager.importSettings(backupFile.toUri()).fold(
                         onSuccess = { stats ->
                           importStats = stats
                           showImportDialog = true
                         },
                         onFailure = { error ->
-                          // If backup restore fails, fall back to file picker
                           Toast.makeText(
                             context,
-                            "从备份恢复失败: ${error.message}，请手动选择文件",
+                            "导入失败: ${error.message}",
                             Toast.LENGTH_LONG,
                           ).show()
-                          importLauncher.launch(arrayOf("text/xml", "application/xml", "*/*"))
                         },
                       )
-                    } else {
-                      // No backup file found, use file picker
-                      importLauncher.launch(arrayOf("text/xml", "application/xml", "*/*"))
                     }
+                  },
+                  onLongClick = {
+                    // 长按：打开文件选择器
+                    importLauncher.launch(arrayOf("text/xml", "application/xml", "*/*"))
                   }
-                },
+                ),
               )
             }
           }
