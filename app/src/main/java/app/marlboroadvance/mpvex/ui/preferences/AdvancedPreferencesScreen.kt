@@ -794,5 +794,18 @@ object AdvancedPreferencesScreen : Screen {
   }
 }
 
-fun getSimplifiedPathFromUri(uri: String): String =
-  Environment.getExternalStorageDirectory().canonicalPath + "/" + Uri.decode(uri).substringAfterLast(":")
+fun getSimplifiedPathFromUri(uri: String): String {
+  // 简化实现（选项 B）：避免重复拼接 external storage 路径并处理 file:// 前缀
+  val decoded = Uri.decode(uri)
+  val part = decoded.substringAfterLast(":")
+  val root = Environment.getExternalStorageDirectory().canonicalPath
+
+  return if (part.startsWith(root) || decoded.startsWith("file://")) {
+    // 如果已经是完整路径或者是 file://，优先返回去掉 scheme 的路径或已解析的部分
+    if (decoded.startsWith("file://")) decoded.removePrefix("file://") else part
+  } else {
+    // 其他情况按原逻辑拼接
+    "$root/$part"
+  }
+}
+
