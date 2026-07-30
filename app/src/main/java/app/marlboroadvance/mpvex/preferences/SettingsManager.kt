@@ -30,7 +30,7 @@ class SettingsManager(
     private const val TAG_DATABASE = "database"
     private const val TAG_NETWORK_CONNECTIONS = "networkConnections"
     private const val TAG_NETWORK_CONNECTION = "networkConnection"
-    
+
     private const val ATTR_KEY = "key"
     private const val ATTR_TYPE = "type"
     private const val ATTR_VALUE = "value"
