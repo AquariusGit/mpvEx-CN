@@ -84,45 +84,6 @@ object AdvancedPreferencesScreen : Screen {
     var importStats by remember { mutableStateOf<SettingsManager.ImportStats?>(null) }
     var exportStats by remember { mutableStateOf<SettingsManager.ExportStats?>(null) }
 
-    // 检测是否为Android TV，如果是则自动设置默认目录
-    LaunchedEffect(Unit) {
-      val isAndroidTV = context.packageManager.hasSystemFeature("android.hardware.type.television")
-      if (isAndroidTV && preferences.mpvConfStorageUri.get().isBlank()) {
-        scope.launch(Dispatchers.IO) {
-          val defaultMpvPath = "/storage/emulated/0/mpv"
-          val mpvDir = File(defaultMpvPath)
-          
-          // 如果目录不存在，创建它
-          if (!mpvDir.exists()) {
-            runCatching {
-              mpvDir.mkdirs()
-              withContext(Dispatchers.Main) {
-                Toast.makeText(
-                  context,
-                  "Android TV: 已创建默认 MPV 目录",
-                  Toast.LENGTH_SHORT,
-                ).show()
-              }
-            }.onFailure { e ->
-              android.util.Log.e("AdvancedPrefs", "Failed to create MPV directory", e)
-            }
-          }
-          
-          // 设置为默认目录的URI (使用file://协议)
-          val defaultUri = Uri.fromFile(mpvDir).toString()
-          preferences.mpvConfStorageUri.set(defaultUri)
-          
-          withContext(Dispatchers.Main) {
-            Toast.makeText(
-              context,
-              "Android TV: 已自动设置 MPV 配置目录",
-              Toast.LENGTH_SHORT,
-            ).show()
-          }
-        }
-      }
-    }
-
     // Export settings launcher
     val exportLauncher =
       rememberLauncherForActivityResult(
@@ -219,7 +180,7 @@ object AdvancedPreferencesScreen : Screen {
     Scaffold(
       topBar = {
         TopAppBar(
-          title = { 
+          title = {
             Text(
               text = stringResource(R.string.pref_advanced),
               style = MaterialTheme.typography.headlineSmall,
@@ -230,7 +191,7 @@ object AdvancedPreferencesScreen : Screen {
           navigationIcon = {
             IconButton(onClick = backStack::removeLastOrNull) {
               Icon(
-                Icons.AutoMirrored.Default.ArrowBack, 
+                Icons.AutoMirrored.Default.ArrowBack,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.secondary,
               )
@@ -290,63 +251,89 @@ object AdvancedPreferencesScreen : Screen {
           item {
             PreferenceSectionHeader(title = "备份与恢复")
           }
-          
+
           item {
             PreferenceCard {
               Preference(
                 title = { Text(text = "导出设置") },
-                summary = { 
+                summary = {
                   Text(
                     text = "将设置导出到 XML 文件",
                     color = MaterialTheme.colorScheme.outline,
-                  ) 
+                  )
                 },
-                icon = { 
+                icon = {
                   Icon(
-                    Icons.Outlined.FileUpload, 
+                    Icons.Outlined.FileUpload,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary
-                  ) 
+                  )
                 },
                 onClick = {
                   exportLauncher.launch(settingsManager.getDefaultExportFilename())
                 },
               )
-              
+
               PreferenceDivider()
-              
+
               Preference(
                 title = { Text(text = "导入设置") },
-                summary = { 
+                summary = {
                   Text(
                     text = "从 XML 文件导入设置",
                     color = MaterialTheme.colorScheme.outline,
-                  ) 
+                  )
                 },
-                icon = { 
+                icon = {
                   Icon(
-                    Icons.Outlined.FileDownload, 
+                    Icons.Outlined.FileDownload,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary
-                  ) 
+                  )
                 },
                 onClick = {
-                  importLauncher.launch(arrayOf("text/xml", "application/xml", "*/*"))
+                  // Try to import from mpv/backup.xml first (for Android TV without DocumentUI)
+                  scope.launch {
+                    val backupFilePath = Environment.getExternalStorageDirectory().path + "/mpv/backup.xml"
+                    val backupFile = java.io.File(backupFilePath)
+
+                    if (backupFile.exists()) {
+                      // Try to restore from backup.xml
+                      settingsManager.importSettingsFromFile(backupFilePath).fold(
+                        onSuccess = { stats ->
+                          importStats = stats
+                          showImportDialog = true
+                        },
+                        onFailure = { error ->
+                          // If backup restore fails, fall back to file picker
+                          Toast.makeText(
+                            context,
+                            "从备份恢复失败: ${error.message}，请手动选择文件",
+                            Toast.LENGTH_LONG,
+                          ).show()
+                          importLauncher.launch(arrayOf("text/xml", "application/xml", "*/*"))
+                        },
+                      )
+                    } else {
+                      // No backup file found, use file picker
+                      importLauncher.launch(arrayOf("text/xml", "application/xml", "*/*"))
+                    }
+                  }
                 },
               )
             }
           }
-          
+
           // MPV Configuration Section
           item {
             PreferenceSectionHeader(title = "MPV 配置")
           }
-          
+
           item {
             PreferenceCard {
               var mpvConf by remember { mutableStateOf(preferences.mpvConf.get()) }
               var inputConf by remember { mutableStateOf(preferences.inputConf.get()) }
-              
+
               // Load config files when storage location changes
               LaunchedEffect(mpvConfStorageLocation) {
                 if (mpvConfStorageLocation.isBlank()) return@LaunchedEffect
@@ -375,50 +362,35 @@ object AdvancedPreferencesScreen : Screen {
                   tempFile.deleteIfExists()
                 }
               }
-              
-               // Load input.conf when storage location changes
-               LaunchedEffect(mpvConfStorageLocation) {
-                 if (mpvConfStorageLocation.isBlank()) return@LaunchedEffect
-                 withContext(Dispatchers.IO) {
-                   val tempFile = kotlin.io.path.createTempFile()
-                   runCatching {
-                     // 检查是否为本地文件路径 (file://)
-                     if (mpvConfStorageLocation.startsWith("file://")) {
-                       val filePath = mpvConfStorageLocation.removePrefix("file://")
-                       val inputConfFile = File(filePath, "input.conf")
-                       if (inputConfFile.exists() && inputConfFile.isFile) {
-                         val content = inputConfFile.readLines().fastJoinToString("\n")
-                         preferences.inputConf.set(content)
-                         File(context.filesDir, "input.conf").writeText(content)
-                         withContext(Dispatchers.Main) {
-                           inputConf = content
-                         }
-                       }
-                     } else {
-                       // 原有的DocumentTree URI处理逻辑
-                       val tree =
-                         DocumentFile.fromTreeUri(
-                           context,
-                           mpvConfStorageLocation.toUri(),
-                         )
-                       val inputConfFile = tree?.findFile("input.conf")
-                       if (inputConfFile != null && inputConfFile.exists()) {
-                         context.contentResolver
-                           .openInputStream(
-                             inputConfFile.uri,
-                           )?.copyTo(tempFile.outputStream())
-                         val content = tempFile.readLines().fastJoinToString("\n")
-                         preferences.inputConf.set(content)
-                         File(context.filesDir, "input.conf").writeText(content)
-                         withContext(Dispatchers.Main) {
-                           inputConf = content
-                         }
-                       }
-                     }
-                   }
-                   tempFile.deleteIfExists()
-                 }
-               }
+
+              // Load input.conf when storage location changes
+              LaunchedEffect(mpvConfStorageLocation) {
+                if (mpvConfStorageLocation.isBlank()) return@LaunchedEffect
+                withContext(Dispatchers.IO) {
+                  val tempFile = kotlin.io.path.createTempFile()
+                  runCatching {
+                    val tree =
+                      DocumentFile.fromTreeUri(
+                        context,
+                        mpvConfStorageLocation.toUri(),
+                      )
+                    val inputConfFile = tree?.findFile("input.conf")
+                    if (inputConfFile != null && inputConfFile.exists()) {
+                      context.contentResolver
+                        .openInputStream(
+                          inputConfFile.uri,
+                        )?.copyTo(tempFile.outputStream())
+                      val content = tempFile.readLines().fastJoinToString("\n")
+                      preferences.inputConf.set(content)
+                      File(context.filesDir, "input.conf").writeText(content)
+                      withContext(Dispatchers.Main) {
+                        inputConf = content
+                      }
+                    }
+                  }
+                  tempFile.deleteIfExists()
+                }
+              }
 
               TwoTargetIconButtonPreference(
                 title = { Text(stringResource(R.string.pref_advanced_mpv_conf_storage_location)) },
@@ -431,19 +403,19 @@ object AdvancedPreferencesScreen : Screen {
                   }
                 },
                 onClick = { locationPicker.launch(null) },
-                iconButtonIcon = { 
+                iconButtonIcon = {
                   Icon(
-                    Icons.Default.Clear, 
+                    Icons.Default.Clear,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.error,
-                  ) 
+                  )
                 },
                 onIconButtonClick = { preferences.mpvConfStorageUri.delete() },
                 iconButtonEnabled = mpvConfStorageLocation.isNotBlank(),
               )
-              
+
               PreferenceDivider()
-              
+
               Preference(
                 title = { Text(stringResource(R.string.pref_advanced_mpv_conf)) },
                 summary = {
@@ -464,9 +436,9 @@ object AdvancedPreferencesScreen : Screen {
                   backStack.add(ConfigEditorScreen(ConfigEditorScreen.ConfigType.MPV_CONF))
                 },
               )
-              
+
               PreferenceDivider()
-              
+
               Preference(
                 title = { Text(stringResource(R.string.pref_advanced_input_conf)) },
                 summary = {
@@ -489,41 +461,41 @@ object AdvancedPreferencesScreen : Screen {
               )
             }
           }
-          
+
           // Scripts Section
           item {
             PreferenceSectionHeader(title = "脚本")
           }
-          
+
           item {
             PreferenceCard {
               val selectedScripts by preferences.selectedLuaScripts.collectAsState()
               val enableLuaScripts by preferences.enableLuaScripts.collectAsState()
-              
+
               SwitchPreference(
                 value = enableLuaScripts,
                 onValueChange = preferences.enableLuaScripts::set,
                 title = { Text("启用 Lua 脚本") },
-                summary = { 
+                summary = {
                   Text(
                     "从配置目录加载 Lua 脚本",
                     color = MaterialTheme.colorScheme.outline,
-                  ) 
+                  )
                 },
               )
-              
+
               PreferenceDivider()
-              
+
               Preference(
                 title = { Text("管理 Lua 脚本") },
                 summary = {
                   when {
                     mpvConfStorageLocation.isBlank() || !enableLuaScripts -> Text(
-                      "请先设置存储位置并启用 Lua 脚本", 
+                      "请先设置存储位置并启用 Lua 脚本",
                       color = MaterialTheme.colorScheme.outline
                     )
                     selectedScripts.isEmpty() -> Text(
-                      "未启用脚本", 
+                      "未启用脚本",
                       color = MaterialTheme.colorScheme.outline
                     )
                     selectedScripts.size == 1 -> Text(
@@ -559,37 +531,37 @@ object AdvancedPreferencesScreen : Screen {
               )
             }
           }
-          
+
           // History Section
           item {
             PreferenceSectionHeader(title = "历史记录")
           }
-          
+
           item {
             PreferenceCard {
               var isConfirmDialogShown by remember { mutableStateOf(false) }
               val mpvexDatabase = koinInject<MpvExDatabase>()
               val enableRecentlyPlayed by preferences.enableRecentlyPlayed.collectAsState()
-              
+
               SwitchPreference(
                 value = enableRecentlyPlayed,
                 onValueChange = preferences.enableRecentlyPlayed::set,
                 title = { Text(stringResource(R.string.pref_advanced_enable_recently_played_title)) },
-                summary = { 
+                summary = {
                   Text(
                     stringResource(R.string.pref_advanced_enable_recently_played_summary),
                     color = MaterialTheme.colorScheme.outline,
-                  ) 
+                  )
                 },
               )
-              
+
               PreferenceDivider()
-              
+
               Preference(
                 title = { Text(stringResource(R.string.pref_advanced_clear_playback_history)) },
                 onClick = { isConfirmDialogShown = true },
               )
-              
+
               if (isConfirmDialogShown) {
                 ConfirmDialog(
                   stringResource(R.string.pref_advanced_clear_playback_history_confirm_title),
@@ -627,25 +599,25 @@ object AdvancedPreferencesScreen : Screen {
               }
             }
           }
-          
+
           // Cache Section
           item {
             PreferenceSectionHeader(title = "缓存")
           }
-          
+
           item {
             PreferenceCard {
               var mpvConf by remember { mutableStateOf(preferences.mpvConf.get()) }
               var isClearThumbsConfirmShown by remember { mutableStateOf(false) }
               val thumbnailRepository = koinInject<ThumbnailRepository>()
-              
+
               Preference(
                 title = { Text(text = "清除配置缓存") },
-                summary = { 
+                summary = {
                   Text(
                     text = "清除缓存的 mpv.conf 设置",
                     color = MaterialTheme.colorScheme.outline,
-                  ) 
+                  )
                 },
                 onClick = {
                   scope.launch(Dispatchers.IO) {
@@ -665,7 +637,7 @@ object AdvancedPreferencesScreen : Screen {
                   }
                 },
               )
-              
+
               PreferenceDivider()
 
               Preference(
@@ -703,16 +675,16 @@ object AdvancedPreferencesScreen : Screen {
                   onCancel = { isClearThumbsConfirmShown = false },
                 )
               }
-              
+
               PreferenceDivider()
-              
+
               Preference(
                 title = { Text(text = stringResource(id = R.string.pref_advanced_clear_fonts_cache)) },
-                summary = { 
+                summary = {
                   Text(
                     text = "删除所有缓存的字幕字体",
                     color = MaterialTheme.colorScheme.outline,
-                  ) 
+                  )
                 },
                 onClick = {
                   scope.launch(Dispatchers.IO) {
@@ -742,45 +714,45 @@ object AdvancedPreferencesScreen : Screen {
               )
             }
           }
-          
+
           // Logging Section
           item {
             PreferenceSectionHeader(title = "日志记录")
           }
-          
+
           item {
             PreferenceCard {
               val activity = LocalActivity.current!!
               val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
               val verboseLogging by preferences.verboseLogging.collectAsState()
-              
+
               SwitchPreference(
                 value = verboseLogging,
                 onValueChange = preferences.verboseLogging::set,
                 title = { Text(stringResource(R.string.pref_advanced_verbose_logging_title)) },
-                summary = { 
+                summary = {
                   Text(
                     stringResource(R.string.pref_advanced_verbose_logging_summary),
                     color = MaterialTheme.colorScheme.outline,
-                  ) 
+                  )
                 },
               )
-              
+
               PreferenceDivider()
-              
+
               Preference(
                 title = { Text(stringResource(R.string.pref_advanced_dump_logs_title)) },
-                summary = { 
+                summary = {
                   Text(
                     stringResource(R.string.pref_advanced_dump_logs_summary),
                     color = MaterialTheme.colorScheme.outline,
-                  ) 
+                  )
                 },
                 onClick = {
                   scope.launch(Dispatchers.IO) {
                     val deviceInfo = CrashActivity.collectDeviceInfo()
                     val logcat = CrashActivity.collectLogcat()
-    
+
                     clipboard.setText(AnnotatedString(CrashActivity.concatLogs(deviceInfo, null, logcat)))
                     CrashActivity.shareLogs(deviceInfo, null, logcat, activity)
                   }
@@ -794,18 +766,5 @@ object AdvancedPreferencesScreen : Screen {
   }
 }
 
-fun getSimplifiedPathFromUri(uri: String): String {
-  // 简化实现（选项 B）：避免重复拼接 external storage 路径并处理 file:// 前缀
-  val decoded = Uri.decode(uri)
-  val part = decoded.substringAfterLast(":")
-  val root = Environment.getExternalStorageDirectory().canonicalPath
-
-  return if (part.startsWith(root) || decoded.startsWith("file://")) {
-    // 如果已经是完整路径或者是 file://，优先返回去掉 scheme 的路径或已解析的部分
-    if (decoded.startsWith("file://")) decoded.removePrefix("file://") else part
-  } else {
-    // 其他情况按原逻辑拼接
-    "$root/$part"
-  }
-}
-
+fun getSimplifiedPathFromUri(uri: String): String =
+  Environment.getExternalStorageDirectory().canonicalPath + "/" + Uri.decode(uri).substringAfterLast(":")
