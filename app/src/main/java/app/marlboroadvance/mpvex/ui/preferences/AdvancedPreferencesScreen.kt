@@ -420,13 +420,12 @@ object AdvancedPreferencesScreen : Screen {
                   if (context.hasSafTreePicker()) {
                     locationPicker.launch(null)
                   } else {
-                    // Android TV (and some custom ROMs) have no com.android.documentsui,
-                    // so ACTION_OPEN_DOCUMENT_TREE has no Activity to resolve to and would
-                    // crash with ActivityNotFoundException. Fall back to the app's own
-                    // external files dir instead - it needs no extra permission on any
-                    // API level and works identically to the SAF path everywhere else in
-                    // this screen because documentFileFromStorageUri() understands file:// too.
-                    val fallbackDir = File(context.getExternalFilesDir(null), "mpv").apply { mkdirs() }
+                    // Android TV（及部分定制 ROM）没有 com.android.documentsui，
+                    // ACTION_OPEN_DOCUMENT_TREE 找不到能处理的 Activity 会直接崩溃。
+                    // 缺少系统选择器时，默认使用根目录下的 mpv 目录（与本文件里
+                    // 备份/恢复功能约定的路径一致：/storage/emulated/0/mpv），
+                    // 用户可以直接用第三方文件管理器或 adb 把配置文件放进去。
+                    val fallbackDir = Environment.getExternalStoragePublicDirectory("mpv").apply { mkdirs() }
                     val fallbackUri = Uri.fromFile(fallbackDir)
                     preferences.mpvConfStorageUri.set(fallbackUri.toString())
                     scope.launch {
@@ -435,7 +434,7 @@ object AdvancedPreferencesScreen : Screen {
                     Toast.makeText(
                       context,
                       "此设备缺少系统文件选择器（Android TV 常见情况），" +
-                        "已自动使用应用私有目录：\n${fallbackDir.absolutePath}",
+                        "已自动使用根目录下的 mpv 文件夹：\n${fallbackDir.absolutePath}",
                       Toast.LENGTH_LONG,
                     ).show()
                   }
@@ -806,7 +805,7 @@ object AdvancedPreferencesScreen : Screen {
 fun getSimplifiedPathFromUri(uri: String): String {
   val parsed = uri.toUri()
   return if (parsed.scheme == "file") {
-    // Fallback path (e.g. on Android TV without DocumentsUI): plain filesystem path.
+    // 无 DocumentsUI 时的兜底路径：普通文件系统路径，直接展示即可。
     parsed.path ?: uri
   } else {
     Environment.getExternalStorageDirectory().canonicalPath + "/" + Uri.decode(uri).substringAfterLast(":")
@@ -814,9 +813,9 @@ fun getSimplifiedPathFromUri(uri: String): String {
 }
 
 /**
- * Android TV (and some custom ROMs) ship without `com.android.documentsui`, so
- * ACTION_OPEN_DOCUMENT_TREE / ACTION_OPEN_DOCUMENT crash with ActivityNotFoundException.
- * Probe for a resolver before launching the picker instead of assuming it exists.
+ * Android TV（及部分定制 ROM）没有预装 com.android.documentsui，
+ * 直接调用 ACTION_OPEN_DOCUMENT_TREE / ACTION_OPEN_DOCUMENT 会因为找不到能处理的
+ * Activity 抛出 ActivityNotFoundException 崩溃。调起选择器前先探测一下，而不是假设它一定存在。
  */
 fun Context.hasSafTreePicker(): Boolean {
   val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
@@ -824,9 +823,9 @@ fun Context.hasSafTreePicker(): Boolean {
 }
 
 /**
- * Builds a [DocumentFile] regardless of whether [uri] is a SAF tree uri (content://, normal case)
- * or a plain filesystem uri (file://, used as the TV fallback below). This lets every existing
- * DocumentFile-based read/write call in this screen keep working unchanged for both cases.
+ * 不管 [uri] 是 SAF 的 tree uri（content://，正常情况）还是普通文件系统 uri
+ * （file://，缺少 DocumentsUI 时的兜底），都构造出一个 DocumentFile，
+ * 这样这个界面里所有基于 DocumentFile 的读写代码都不用区分两种情况。
  */
 fun documentFileFromStorageUri(context: Context, uri: Uri): DocumentFile? =
   if (uri.scheme == "file") {
@@ -836,8 +835,8 @@ fun documentFileFromStorageUri(context: Context, uri: Uri): DocumentFile? =
   }
 
 /**
- * Shared "ensure standard mpv folder layout" logic, used both for a normal SAF tree pick
- * and for the file:// fallback pick on devices without DocumentsUI.
+ * "确保标准 mpv 目录结构存在"这段逻辑抽出来共用：无论是正常走 SAF 选择目录，
+ * 还是缺少 DocumentsUI 时回退到根目录 mpv 文件夹，都调用同一份代码。
  */
 suspend fun ensureMpvFolderStructure(context: Context, tree: DocumentFile) {
   withContext(Dispatchers.IO) {
