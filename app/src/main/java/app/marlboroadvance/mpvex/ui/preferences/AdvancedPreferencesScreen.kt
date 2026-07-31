@@ -1,6 +1,8 @@
 package app.marlboroadvance.mpvex.ui.preferences
 
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Environment
 import android.widget.Toast
@@ -213,32 +215,11 @@ object AdvancedPreferencesScreen : Screen {
             preferences.mpvConfStorageUri.set(uri.toString())
 
             // Auto-create standard MPV folder structure
-            scope.launch(Dispatchers.IO) {
-              runCatching {
-                val tree = DocumentFile.fromTreeUri(context, uri)
-                if (tree != null && tree.exists() && tree.canWrite()) {
-                  val subdirs = listOf("fonts", "script-opts", "scripts", "shaders")
-                  for (name in subdirs) {
-                    val existing = tree.listFiles().firstOrNull {
-                      it.isDirectory && it.name?.equals(name, ignoreCase = true) == true
-                    }
-                    if (existing == null) {
-                      tree.createDirectory(name)
-                    }
-                  }
-                  // Create default mpv.conf if missing
-                  val hasConf = tree.listFiles().any {
-                    it.isFile && it.name?.equals("mpv.conf", ignoreCase = true) == true
-                  }
-                  if (!hasConf) {
-                    tree.createFile("application/octet-stream", "mpv.conf")
-                  }
-                  withContext(Dispatchers.Main) {
-                    Toast.makeText(context, "MPV directory ready ✓", Toast.LENGTH_SHORT).show()
-                  }
-                }
-              }.onFailure { e ->
-                android.util.Log.e("AdvancedPrefs", "Error creating MPV directory structure", e)
+            scope.launch {
+              val tree = documentFileFromStorageUri(context, uri)
+              if (tree != null) {
+                ensureMpvFolderStructure(context, tree)
+                Toast.makeText(context, "MPV directory ready ✓", Toast.LENGTH_SHORT).show()
               }
             }
           }
@@ -374,7 +355,7 @@ object AdvancedPreferencesScreen : Screen {
                   val tempFile = kotlin.io.path.createTempFile()
                   runCatching {
                     val tree =
-                      DocumentFile.fromTreeUri(
+                      documentFileFromStorageUri(
                         context,
                         mpvConfStorageLocation.toUri(),
                       )
@@ -403,7 +384,7 @@ object AdvancedPreferencesScreen : Screen {
                   val tempFile = kotlin.io.path.createTempFile()
                   runCatching {
                     val tree =
-                      DocumentFile.fromTreeUri(
+                      documentFileFromStorageUri(
                         context,
                         mpvConfStorageLocation.toUri(),
                       )
@@ -435,7 +416,30 @@ object AdvancedPreferencesScreen : Screen {
                     )
                   }
                 },
-                onClick = { locationPicker.launch(null) },
+                onClick = {
+                  if (context.hasSafTreePicker()) {
+                    locationPicker.launch(null)
+                  } else {
+                    // Android TV (and some custom ROMs) have no com.android.documentsui,
+                    // so ACTION_OPEN_DOCUMENT_TREE has no Activity to resolve to and would
+                    // crash with ActivityNotFoundException. Fall back to the app's own
+                    // external files dir instead - it needs no extra permission on any
+                    // API level and works identically to the SAF path everywhere else in
+                    // this screen because documentFileFromStorageUri() understands file:// too.
+                    val fallbackDir = File(context.getExternalFilesDir(null), "mpv").apply { mkdirs() }
+                    val fallbackUri = Uri.fromFile(fallbackDir)
+                    preferences.mpvConfStorageUri.set(fallbackUri.toString())
+                    scope.launch {
+                      ensureMpvFolderStructure(context, DocumentFile.fromFile(fallbackDir))
+                    }
+                    Toast.makeText(
+                      context,
+                      "此设备缺少系统文件选择器（Android TV 常见情况），" +
+                        "已自动使用应用私有目录：\n${fallbackDir.absolutePath}",
+                      Toast.LENGTH_LONG,
+                    ).show()
+                  }
+                },
                 iconButtonIcon = {
                   Icon(
                     Icons.Default.Clear,
@@ -799,5 +803,63 @@ object AdvancedPreferencesScreen : Screen {
   }
 }
 
-fun getSimplifiedPathFromUri(uri: String): String =
-  Environment.getExternalStorageDirectory().canonicalPath + "/" + Uri.decode(uri).substringAfterLast(":")
+fun getSimplifiedPathFromUri(uri: String): String {
+  val parsed = uri.toUri()
+  return if (parsed.scheme == "file") {
+    // Fallback path (e.g. on Android TV without DocumentsUI): plain filesystem path.
+    parsed.path ?: uri
+  } else {
+    Environment.getExternalStorageDirectory().canonicalPath + "/" + Uri.decode(uri).substringAfterLast(":")
+  }
+}
+
+/**
+ * Android TV (and some custom ROMs) ship without `com.android.documentsui`, so
+ * ACTION_OPEN_DOCUMENT_TREE / ACTION_OPEN_DOCUMENT crash with ActivityNotFoundException.
+ * Probe for a resolver before launching the picker instead of assuming it exists.
+ */
+fun Context.hasSafTreePicker(): Boolean {
+  val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+  return packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY).isNotEmpty()
+}
+
+/**
+ * Builds a [DocumentFile] regardless of whether [uri] is a SAF tree uri (content://, normal case)
+ * or a plain filesystem uri (file://, used as the TV fallback below). This lets every existing
+ * DocumentFile-based read/write call in this screen keep working unchanged for both cases.
+ */
+fun documentFileFromStorageUri(context: Context, uri: Uri): DocumentFile? =
+  if (uri.scheme == "file") {
+    uri.path?.let { DocumentFile.fromFile(File(it)) }
+  } else {
+    DocumentFile.fromTreeUri(context, uri)
+  }
+
+/**
+ * Shared "ensure standard mpv folder layout" logic, used both for a normal SAF tree pick
+ * and for the file:// fallback pick on devices without DocumentsUI.
+ */
+suspend fun ensureMpvFolderStructure(context: Context, tree: DocumentFile) {
+  withContext(Dispatchers.IO) {
+    runCatching {
+      if (!tree.exists() || !tree.canWrite()) return@runCatching
+      val subdirs = listOf("fonts", "script-opts", "scripts", "shaders")
+      for (name in subdirs) {
+        val existing = tree.listFiles().firstOrNull {
+          it.isDirectory && it.name?.equals(name, ignoreCase = true) == true
+        }
+        if (existing == null) {
+          tree.createDirectory(name)
+        }
+      }
+      val hasConf = tree.listFiles().any {
+        it.isFile && it.name?.equals("mpv.conf", ignoreCase = true) == true
+      }
+      if (!hasConf) {
+        tree.createFile("application/octet-stream", "mpv.conf")
+      }
+    }.onFailure { e ->
+      android.util.Log.e("AdvancedPrefs", "Error creating MPV directory structure", e)
+    }
+  }
+}
